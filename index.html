@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>How LLMs work, and MCP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#F2F5F8; --sheet:#FFFFFF; --ink:#14202E; --muted:#556476; --line:#C7D1DC;
+  --signal:#E3A400; --signal-ink:#3A2A00; --data:#1F5FAF; --warn:#B3261E; --warn-bg:#FBECEA;
+  --caution-bg:#FFF6DA; --note-bg:#E8F0FA;
+  --c-engine:#1F5FAF; --c-cabin:#0F7A70; --c-weather:#6A4CBF; --c-galley:#A65A00;
+  --display:"Barlow Condensed","Arial Narrow","Roboto Condensed",sans-serif;
+  --body:"IBM Plex Sans","Segoe UI",Helvetica,Arial,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0F1620; --sheet:#16202C; --ink:#E4EAF1; --muted:#97A5B5; --line:#2B3A4B;
+    --signal:#F2BE2E; --signal-ink:#1E1600; --data:#7FB0F0; --warn:#F2948A; --warn-bg:#3A1D1B;
+    --caution-bg:#352A0C; --note-bg:#162A42;
+    --c-engine:#7FB0F0; --c-cabin:#4CC2B5; --c-weather:#A78DF0; --c-galley:#F0A04B;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0F1620; --sheet:#16202C; --ink:#E4EAF1; --muted:#97A5B5; --line:#2B3A4B;
+  --signal:#F2BE2E; --signal-ink:#1E1600; --data:#7FB0F0; --warn:#F2948A; --warn-bg:#3A1D1B;
+  --caution-bg:#352A0C; --note-bg:#162A42;
+  --c-engine:#7FB0F0; --c-cabin:#4CC2B5; --c-weather:#A78DF0; --c-galley:#F0A04B;
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px);scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important;animation:none!important}}
+body{margin:0;background:var(--paper);color:var(--ink);font:400 17px/1.6 var(--body)}
+a{color:var(--data)}
+:focus-visible{outline:3px solid var(--signal);outline-offset:2px}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px}
+.layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:48px}
+@media (max-width:900px){.layout{grid-template-columns:1fr}.toc{display:none}}
+
+/* Header strip: like a manual page header */
+.pagehead{border-bottom:2px solid var(--ink);display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:14px 0;font:500 14px/1.3 var(--mono);color:var(--muted);flex-wrap:wrap}
+.pagehead b{color:var(--ink);font-weight:500}
+
+h1,h2,h3{font-family:var(--display);line-height:1.05;margin:0}
+h1{font-size:clamp(46px,8vw,96px);font-weight:700;letter-spacing:-.01em;max-width:12ch;margin-top:36px}
+h2{font-size:clamp(32px,4.4vw,46px);font-weight:600;margin-bottom:14px}
+h3{font-size:24px;font-weight:600;margin:22px 0 6px}
+.lede{font-size:20px;max-width:58ch;color:var(--muted);margin:18px 0 0}
+p{max-width:66ch;margin:0 0 12px}
+section{padding:56px 0;border-bottom:1px solid var(--line)}
+section:last-of-type{border-bottom:0}
+.secno{font:500 15px var(--mono);color:var(--muted);display:block;margin-bottom:6px}
+
+/* TOC */
+.toc{position:sticky;top:env(safe-area-inset-top,0px);align-self:start;padding-top:56px}
+.toc ol{list-style:none;padding:0;margin:0;border-left:2px solid var(--line)}
+.toc a{display:block;padding:7px 0 7px 14px;margin-left:-2px;border-left:2px solid transparent;color:var(--muted);text-decoration:none;font-size:15px}
+.toc a:hover{color:var(--ink)}
+.toc a.on{color:var(--ink);border-left-color:var(--signal);font-weight:600}
+
+/* Hero demo: ask a question */
+.hero{padding:0 0 56px;border-bottom:1px solid var(--line)}
+.ask{margin-top:36px;background:var(--sheet);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.ask-top{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line)}
+.ask-q{font-weight:600;font-size:18px}
+.switch{display:inline-flex;align-items:center;gap:10px;cursor:pointer;font-weight:500;user-select:none}
+.switch input{position:absolute;opacity:0;width:1px;height:1px}
+.track{width:52px;height:30px;border-radius:15px;background:var(--line);position:relative;transition:background .2s}
+.track::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:var(--sheet);box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .2s}
+.switch input:checked + .track{background:var(--signal)}
+.switch input:checked + .track::after{transform:translateX(22px)}
+.switch input:focus-visible + .track{outline:3px solid var(--data);outline-offset:2px}
+.ask-body{display:grid;grid-template-columns:1fr 1fr;min-height:180px}
+@media (max-width:700px){.ask-body{grid-template-columns:1fr}}
+.ask-col{padding:18px}
+.ask-col + .ask-col{border-left:1px solid var(--line)}
+@media (max-width:700px){.ask-col + .ask-col{border-left:0;border-top:1px solid var(--line)}}
+.ask-col h4{margin:0 0 8px;font:600 15px var(--body);color:var(--muted)}
+.ctx{font:400 14px/1.5 var(--mono);color:var(--muted)}
+.ctx .chip{display:block;padding:6px 8px;border-left:3px solid var(--c-engine);background:var(--note-bg);margin-bottom:6px;color:var(--ink);border-radius:0 4px 4px 0}
+.answer{font-size:17px}
+.answer .src{font:500 13px var(--mono);color:var(--data)}
+.verdict{display:inline-block;margin-top:10px;font-weight:600;font-size:14px;padding:3px 8px;border-radius:3px}
+.verdict.bad{background:var(--warn-bg);color:var(--warn)}
+.verdict.good{background:var(--note-bg);color:var(--data)}
+
+/* Notices (STE style) */
+.notice{border:2px solid;border-radius:4px;padding:14px 16px;margin:16px 0;max-width:66ch}
+.notice strong{font-family:var(--display);font-size:20px;letter-spacing:.04em;display:block;margin-bottom:4px}
+.notice p{margin:0 0 6px}
+.notice.warning{border-color:var(--warn);background:var(--warn-bg)}
+.notice.warning strong{color:var(--warn)}
+.notice.caution{border-color:var(--signal);background:var(--caution-bg)}
+.notice.note{border-color:var(--data);background:var(--note-bg)}
+
+/* Definitions table */
+.def{display:grid;grid-template-columns:minmax(140px,190px) 1fr;border-top:1px solid var(--line);max-width:780px}
+.def dt,.def dd{padding:12px 0;border-bottom:1px solid var(--line);margin:0}
+.def dt{font-weight:600;padding-right:16px}
+@media (max-width:560px){.def{grid-template-columns:1fr}.def dt{border-bottom:0;padding-bottom:0}}
+
+/* Vector strip */
+.vec{font:400 14px/1.6 var(--mono);background:var(--sheet);border:1px solid var(--line);border-radius:6px;padding:14px 16px;overflow-x:auto;white-space:nowrap;max-width:780px;margin:14px 0}
+.vec .lbl{color:var(--muted)}
+.vec .num{color:var(--data)}
+
+/* Playground */
+.play{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;margin-top:22px}
+@media (max-width:820px){.play{grid-template-columns:1fr}}
+.plane-box{background:var(--sheet);border:1px solid var(--line);border-radius:6px;padding:10px}
+#plane{width:100%;height:auto;display:block;cursor:crosshair;touch-action:manipulation}
+#plane .grid line{stroke:var(--line);stroke-width:.2}
+#plane .pt{transition:r .2s}
+#plane .lnk{stroke:var(--signal);stroke-width:.6;stroke-dasharray:1.2 .8}
+#plane .qpt{fill:var(--signal);stroke:var(--ink);stroke-width:.5}
+#plane .ring{fill:none;stroke:var(--signal);stroke-width:.35;opacity:.7}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:14px;color:var(--muted);padding:8px 4px 2px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:0}
+.ctrl{display:flex;flex-direction:column;gap:14px}
+.qbtns{display:flex;flex-wrap:wrap;gap:8px}
+.btn{font:500 15px var(--body);color:var(--ink);background:var(--sheet);border:1px solid var(--line);border-radius:4px;padding:8px 12px;cursor:pointer;text-align:left}
+.btn:hover{border-color:var(--ink)}
+.btn[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn.primary{background:var(--signal);color:var(--signal-ink);border-color:var(--signal);font-weight:600}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.k{display:flex;align-items:center;gap:12px;font-weight:500}
+.k input{flex:1;accent-color:var(--signal)}
+.results{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
+.results li{display:grid;grid-template-columns:28px 1fr auto;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:15px;align-items:start}
+.results .rk{font:500 14px var(--mono);color:var(--muted)}
+.results .sc{font:500 14px var(--mono)}
+.bar{height:4px;background:var(--line);border-radius:2px;margin-top:5px;overflow:hidden}
+.bar span{display:block;height:100%;background:var(--signal)}
+.hint{font-size:14px;color:var(--muted);margin:0}
+
+/* Procedure stepper */
+.proc{margin-top:24px;display:grid;grid-template-columns:minmax(200px,260px) minmax(0,1fr);gap:24px}
+@media (max-width:760px){.proc{grid-template-columns:1fr}}
+.steps{list-style:none;margin:0;padding:0;counter-reset:s}
+.steps .phase{font:600 14px var(--body);color:var(--muted);padding:14px 0 6px}
+.steps .phase:first-child{padding-top:0}
+.steps button{all:unset;box-sizing:border-box;display:flex;gap:12px;align-items:center;width:100%;padding:9px 10px;border-radius:4px;cursor:pointer;font-weight:500}
+.steps button:hover{background:var(--sheet)}
+.steps button:focus-visible{outline:3px solid var(--signal)}
+.steps button .n{flex:none;width:28px;height:28px;border-radius:50%;border:2px solid var(--line);display:grid;place-items:center;font:600 14px var(--mono);color:var(--muted)}
+.steps button.done .n{border-color:var(--ink);color:var(--ink)}
+.steps button.on{background:var(--sheet);box-shadow:inset 3px 0 0 var(--signal)}
+.steps button.on .n{background:var(--signal);border-color:var(--signal);color:var(--signal-ink)}
+.stage{background:var(--sheet);border:1px solid var(--line);border-radius:6px;padding:22px;min-height:340px;display:flex;flex-direction:column}
+.stage h3{margin-top:0;font-size:30px}
+.stage .act{font-size:18px;font-weight:500;margin-bottom:14px}
+.artifact{flex:1;font:400 14px/1.55 var(--mono);background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:14px;overflow-x:auto;white-space:pre-wrap;word-break:break-word}
+.artifact .hl{background:var(--caution-bg);color:var(--ink)}
+.artifact .dim{color:var(--muted)}
+.artifact .blue{color:var(--data)}
+.stage-nav{display:flex;justify-content:space-between;gap:10px;margin-top:16px}
+
+/* Quiz */
+.q{margin:22px 0;max-width:720px}
+.q p{font-weight:600}
+.opts{display:flex;flex-direction:column;gap:8px}
+.opts .btn{width:100%}
+.opts .btn.right{border-color:var(--data);background:var(--note-bg)}
+.opts .btn.wrong{border-color:var(--warn);background:var(--warn-bg)}
+.fb{font-size:15px;margin-top:8px;min-height:1.4em;color:var(--muted)}
+
+footer{padding:40px 0 60px;color:var(--muted);font-size:14px}
+.themebtn{font:500 13px var(--mono);background:none;border:1px solid var(--line);color:var(--muted);border-radius:4px;padding:4px 8px;cursor:pointer}
+/* Task 02 additions */
+main{min-width:0}
+@media (max-width:900px){.layout{grid-template-columns:minmax(0,1fr)}}
+.toks{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.tok{font:500 15px/1.2 var(--mono);border:1px solid var(--line);border-radius:4px;padding:6px 8px 5px;background:var(--note-bg);color:var(--ink);display:inline-flex;flex-direction:column;align-items:flex-start;gap:3px}
+.tok:nth-child(3n+2){background:var(--caution-bg)}
+.tok:nth-child(3n+3){background:color-mix(in srgb,var(--c-cabin) 16%,var(--sheet))}
+.tok .sp{color:var(--muted)}
+.tok small{font-size:11px;color:var(--muted)}
+.plainq{font-size:20px;line-height:1.5}
+.plainq .blank{display:inline-block;min-width:80px;border-bottom:2px solid var(--signal)}
+.probs{list-style:none;margin:0;padding:0}
+.probs li{display:grid;grid-template-columns:96px 1fr 52px;gap:10px;align-items:center;padding:5px 0;font:500 14px var(--mono)}
+.probs .pb{height:10px;background:var(--line);border-radius:5px;overflow:hidden}
+.probs .pb span{display:block;height:100%;background:var(--signal);transition:width .25s}
+.probs .pv{text-align:right;color:var(--muted)}
+textarea.tin{width:100%;min-height:84px;font:400 17px/1.5 var(--body);color:var(--ink);background:var(--sheet);border:1px solid var(--line);border-radius:6px;padding:12px;resize:vertical}
+.panel{background:var(--sheet);border:1px solid var(--line);border-radius:6px;padding:18px;margin-top:16px}
+.stats{display:flex;flex-wrap:wrap;gap:8px 22px;font:500 14px var(--mono);color:var(--muted);margin-top:10px}
+.stats b{color:var(--ink);font-weight:500}
+.att{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 14px}
+.att button{font:500 16px var(--mono);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:8px 10px;cursor:pointer;background:var(--sheet);transition:background .2s}
+.att button.sel{outline:3px solid var(--data);outline-offset:1px}
+.att button.future{opacity:.35;border-style:dashed}
+.gen{font:400 17px/1.6 var(--body);padding:12px 14px;background:var(--paper);border:1px solid var(--line);border-radius:4px;margin:12px 0}
+.gen .new{background:var(--caution-bg);font-weight:600;padding:0 3px;border-radius:3px}
+.diagram{width:100%;height:auto;display:block}
+.diagram text{font-family:var(--body);fill:var(--ink)}
+.diagram .box{fill:var(--sheet);stroke:var(--line);stroke-width:2}
+.diagram .hbox{fill:var(--note-bg);stroke:var(--data);stroke-width:2}
+.diagram .sbox{fill:var(--caution-bg);stroke:var(--signal);stroke-width:2}
+.diagram .ln{stroke:var(--muted);stroke-width:2;fill:none}
+.diagram .lbl{font-family:var(--mono);font-size:13px;fill:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="pagehead">
+    <span><b>AI CONCEPTS</b> / Task 02: How LLMs work, and MCP</span>
+    <span><button class="themebtn" id="themeBtn" type="button">Change theme</button></span>
+  </div>
+
+  <div class="layout">
+    <nav class="toc" aria-label="Contents">
+      <ol>
+        <li><a href="#top">Try it first</a></li>
+        <li><a href="#idea">1. The main idea</a></li>
+        <li><a href="#tokens">2. Tokens</a></li>
+        <li><a href="#embeddings">3. Embeddings</a></li>
+        <li><a href="#attention">4. Attention</a></li>
+        <li><a href="#predict">5. Prediction and temperature</a></li>
+        <li><a href="#procedure">6. The full procedure</a></li>
+        <li><a href="#mcp">7. MCP: connect the model to tools</a></li>
+        <li><a href="#safety">8. Warnings and cautions</a></li>
+        <li><a href="#check">9. Check your knowledge</a></li>
+      </ol>
+    </nav>
+
+    <main>
+      <header class="hero" id="top">
+        <h1>How LLMs work, and MCP</h1>
+        <p class="lede">An LLM does not read words. It reads numbers and predicts the next piece of text. MCP lets it use your tools and data. This page shows both.</p>
+
+        <div class="ask" aria-live="polite">
+          <div class="ask-top">
+            <span class="ask-q">Complete the sentence</span>
+            <label class="switch"><input type="checkbox" id="heroToggle"><span class="track" aria-hidden="true"></span><span id="heroLabel">Show what the model sees</span></label>
+          </div>
+          <div class="ask-body">
+            <div class="ask-col"><h4 id="heroInH">Input that you see</h4><div id="heroIn"></div></div>
+            <div class="ask-col"><h4 id="heroOutH">Your guess</h4><div id="heroOut"></div></div>
+          </div>
+        </div>
+      </header>
+
+      <section id="idea">
+        <span class="secno">1</span>
+        <h2>The main idea</h2>
+        <p>A large language model (LLM) does one task. It predicts the next token.</p>
+        <p>It adds that token to the text. Then it predicts the next token again. A full answer is this loop, repeated many times.</p>
+        <p>To make a good prediction, the model uses three tools: <strong>tokens</strong>, <strong>embeddings</strong> and <strong>attention</strong>.</p>
+        <div class="notice note">
+          <strong>NOTE</strong>
+          <p>The model learned its patterns during training, from a very large set of text. At the time of your question, it does not search the internet. It only uses its learned patterns and the text in its context window.</p>
+        </div>
+      </section>
+
+      <section id="tokens">
+        <span class="secno">2</span>
+        <h2>Tokens</h2>
+        <p>A <strong>token</strong> is a small piece of text. It can be a full word, a part of a word, or a punctuation mark.</p>
+        <p>The tokenizer changes each token into a number (the token ID). The model works only with these numbers.</p>
+        <p>In English, one token is approximately four characters. Thus, 100 words are approximately 130 tokens.</p>
+        <h3>Try the tokenizer</h3>
+        <p class="hint">Type a sentence. Long or rare words break into more pieces.</p>
+        <div class="panel">
+          <label for="tin" class="hint" style="display:block;margin-bottom:6px">Your text</label>
+          <textarea class="tin" id="tin">The pilot's checklist isn't finished. Recalibrate the altimeter before departure.</textarea>
+          <div class="toks" id="tout" aria-live="polite"></div>
+          <div class="stats" id="tstats"></div>
+        </div>
+        <p class="hint" style="margin-top:10px">This is a simplified tokenizer. Real tokenizers (for example, BPE) learn their pieces from data.</p>
+      </section>
+
+      <section id="embeddings">
+        <span class="secno">3</span>
+        <h2>Embeddings</h2>
+        <p>A token ID is only a label. It does not show meaning. Thus, the model changes each token ID into a vector (a list of numbers). This vector is the <strong>embedding</strong>.</p>
+        <p>Tokens with almost the same meaning get vectors that are near each other.</p>
+        <div class="vec"><span class="lbl">" pilot"   (ID 18213) →</span> [<span class="num">0.41</span>, <span class="num">-0.22</span>, <span class="num">0.87</span>, <span class="num">0.05</span>, … <span class="lbl">4,096 numbers</span>]</div>
+        <div class="vec"><span class="lbl">" captain" (ID 28627) →</span> [<span class="num">0.39</span>, <span class="num">-0.19</span>, <span class="num">0.82</span>, <span class="num">0.11</span>, … <span class="lbl">near " pilot"</span>]</div>
+        <div class="vec"><span class="lbl">" coffee"  (ID 18837) →</span> [<span class="num">-0.63</span>, <span class="num">0.54</span>, <span class="num">-0.12</span>, <span class="num">0.70</span>, … <span class="lbl">far from " pilot"</span>]</div>
+        <p>The model also adds position data to each vector. Thus, it knows the word order. “Pilot checks engine” and “engine checks pilot” have the same tokens, but a different meaning.</p>
+        <div class="notice note">
+          <strong>NOTE</strong>
+          <p>These are the same kind of vectors that a vector database stores for RAG. See Task 01 for a similarity search demo.</p>
+        </div>
+      </section>
+
+      <section id="attention">
+        <span class="secno">4</span>
+        <h2>Attention</h2>
+        <p>One word can have different meanings in different sentences. <strong>Attention</strong> lets each token get information from the other tokens in the text.</p>
+        <p>For each token, the model calculates a weight for each earlier token. A high weight means “this token is important for me”. The model then mixes the vectors with these weights.</p>
+        <p>The model does this in many layers, and with many attention “heads” in each layer. Each head can find a different type of relation.</p>
+        <h3>Try attention</h3>
+        <p class="hint">Click a token. The yellow color shows how much attention it gives to each earlier token. Try “it”.</p>
+        <div class="panel">
+          <div class="att" id="att" role="group" aria-label="Tokens of the sentence"></div>
+          <ol class="probs" id="attBars" aria-live="polite"></ol>
+          <p class="hint" id="attNote" style="margin-top:8px"></p>
+        </div>
+        <p class="hint" style="margin-top:10px">The weights on this page are examples. A real model has many heads with different weights.</p>
+      </section>
+
+      <section id="predict">
+        <span class="secno">5</span>
+        <h2>Prediction and temperature</h2>
+        <p>After the last layer, the model gives a probability to each token in its vocabulary. Then it selects one token.</p>
+        <p><strong>Temperature</strong> controls this selection. A low temperature almost always selects the most probable token. A high temperature gives less probable tokens more chance.</p>
+        <h3>Try it</h3>
+        <div class="panel">
+          <label class="k">Temperature <input type="range" id="temp" min="0.1" max="2" step="0.1" value="1"> <span id="tempVal" style="font-family:var(--mono)">1.0</span></label>
+          <ol class="probs" id="tprobs" style="margin-top:12px"></ol>
+          <div class="gen" id="genOut" aria-live="polite"></div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="btn primary" id="genBtn" type="button">Select next token</button>
+            <button class="btn" id="genReset" type="button">Clear</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="procedure">
+        <span class="secno">6</span>
+        <h2>The full procedure</h2>
+        <p>The model does these steps for each new token.</p>
+        <div id="procLLM"></div>
+      </section>
+
+      <section id="mcp">
+        <span class="secno">7</span>
+        <h2>MCP: connect the model to tools</h2>
+        <p>An LLM only makes text. It cannot read your live data or do actions in your systems.</p>
+        <p>Before MCP, each AI app needed a special connector for each system. Ten apps and ten systems needed up to one hundred connectors.</p>
+        <p><strong>MCP</strong> (Model Context Protocol) is an open standard for this connection. Anthropic introduced it in 2024. You build one MCP server for a system. Then each MCP-compatible app can use it, like one USB-C plug for many devices.</p>
+        <dl class="def">
+          <dt>Host</dt><dd>The AI app that the user talks to (for example, Claude Desktop or an IDE).</dd>
+          <dt>MCP client</dt><dd>The part of the host that connects to one MCP server.</dd>
+          <dt>MCP server</dt><dd>A small program that gives access to one system, for example a database, a file store or an API.</dd>
+          <dt>Tools</dt><dd>Actions that the server makes available, for example <code>get_work_order</code>.</dd>
+          <dt>Resources</dt><dd>Data that the server makes available to read, for example files or records.</dd>
+          <dt>Prompts</dt><dd>Prepared prompt templates that the server makes available.</dd>
+        </dl>
+        <div class="plane-box" style="margin:20px 0;overflow-x:auto">
+          <svg class="diagram" viewBox="0 0 760 290" style="min-width:600px" role="img" aria-label="One host app with MCP clients connects to three MCP servers, and each server connects to one system">
+            <rect class="box" x="10" y="115" width="90" height="56" rx="6"/><text x="55" y="149" text-anchor="middle">User</text>
+            <path class="ln" d="M100 143h50"/>
+            <rect class="hbox" x="150" y="30" width="220" height="226" rx="8"/>
+            <text x="166" y="56" font-weight="600">Host app</text>
+            <rect class="box" x="166" y="72" width="80" height="168" rx="6"/><text x="206" y="160" text-anchor="middle">LLM</text>
+            <rect class="box" x="262" y="72" width="94" height="44" rx="6"/><text x="309" y="99" text-anchor="middle" font-size="14">MCP client</text>
+            <rect class="box" x="262" y="122" width="94" height="44" rx="6"/><text x="309" y="149" text-anchor="middle" font-size="14">MCP client</text>
+            <rect class="box" x="262" y="172" width="94" height="44" rx="6"/><text x="309" y="199" text-anchor="middle" font-size="14">MCP client</text>
+            <path class="ln" d="M356 94h74M356 144h74M356 194h74"/>
+            <text class="lbl" x="393" y="84" text-anchor="middle">MCP</text>
+            <rect class="sbox" x="430" y="70" width="150" height="48" rx="6"/><text x="505" y="99" text-anchor="middle" font-size="14">Maintenance server</text>
+            <rect class="sbox" x="430" y="120" width="150" height="48" rx="6"/><text x="505" y="149" text-anchor="middle" font-size="14">Files server</text>
+            <rect class="sbox" x="430" y="170" width="150" height="48" rx="6"/><text x="505" y="199" text-anchor="middle" font-size="14">Calendar server</text>
+            <path class="ln" d="M580 94h40M580 144h40M580 194h40"/>
+            <rect class="box" x="620" y="70" width="130" height="48" rx="6"/><text x="685" y="99" text-anchor="middle" font-size="14">Work order DB</text>
+            <rect class="box" x="620" y="120" width="130" height="48" rx="6"/><text x="685" y="149" text-anchor="middle" font-size="14">Shared drive</text>
+            <rect class="box" x="620" y="170" width="130" height="48" rx="6"/><text x="685" y="199" text-anchor="middle" font-size="14">Calendar</text>
+          </svg>
+        </div>
+
+        <h3>Try it: one question, with and without MCP</h3>
+        <div class="ask" aria-live="polite" style="margin-top:12px">
+          <div class="ask-top">
+            <span class="ask-q">Question: “What is the status of work order WO-2231?”</span>
+            <label class="switch"><input type="checkbox" id="mcpToggle"><span class="track" aria-hidden="true"></span><span id="mcpLabel">MCP is off</span></label>
+          </div>
+          <div class="ask-body">
+            <div class="ask-col"><h4>What happens</h4><div class="ctx" id="mcpCtx"></div></div>
+            <div class="ask-col"><h4>Answer from the model</h4><div class="answer" id="mcpAns"></div></div>
+          </div>
+        </div>
+
+        <h3>The MCP procedure</h3>
+        <div id="procMCP"></div>
+      </section>
+
+      <section id="safety">
+        <span class="secno">8</span>
+        <h2>Warnings and cautions</h2>
+        <div class="notice warning">
+          <strong>WARNING</strong>
+          <p>An LLM predicts probable text. It does not check facts. An answer can sound correct and be wrong. Examine important answers.</p>
+        </div>
+        <div class="notice warning">
+          <strong>WARNING</strong>
+          <p>An MCP server can read your data and do actions. Install MCP servers only from sources that you trust. Approve each tool call that changes or sends data.</p>
+        </div>
+        <div class="notice caution">
+          <strong>CAUTION</strong>
+          <p>Tool results can contain hidden instructions (prompt injection). Do not let the model obey text that comes from a tool. Treat it as data.</p>
+        </div>
+        <div class="notice caution">
+          <strong>CAUTION</strong>
+          <p>Tokens fill the context window and cost money. Many languages, code and numbers use more tokens than plain English.</p>
+        </div>
+        <div class="notice note">
+          <strong>NOTE</strong>
+          <p>The model does not run the tool. The model only asks for the tool call. The host runs it through the MCP client and server.</p>
+        </div>
+      </section>
+
+      <section id="check">
+        <span class="secno">9</span>
+        <h2>Check your knowledge</h2>
+        <div id="quiz"></div>
+      </section>
+
+      <footer>Example data on this page is fictional (token IDs, vectors, attention weights, probabilities and the maintenance system). The models on this page are simplified.</footer>
+    </main>
+  </div>
+</div>
+<script>
+(function(){
+  var root=document.documentElement;
+  try{var saved=localStorage.getItem('theme'); if(saved) root.setAttribute('data-theme',saved);}catch(e){}
+  document.getElementById('themeBtn').addEventListener('click',function(){
+    var cur=root.getAttribute('data-theme')||(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+    var nxt=cur==='dark'?'light':'dark'; root.setAttribute('data-theme',nxt);
+    try{localStorage.setItem('theme',nxt);}catch(e){}
+  });
+  function esc(s){return s.replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  function chip(t,id){return '<span class="tok"><span>'+esc(t).replace(/^ /,'<span class="sp">·</span>')+'</span><small>'+id+'</small></span>';}
+  function bars(el,rows){
+    el.innerHTML=rows.map(function(r){return '<li><span>'+esc(r[0])+'</span><span class="pb"><span style="width:'+(r[1]*100).toFixed(1)+'%"></span></span><span class="pv">'+Math.round(r[1]*100)+'%</span></li>';}).join('');
+  }
+
+  /* Hero */
+  var heroToks=[['The',464],[' pilot',18213],[' checked',10667],[' the',262],[' engine',3113],[' before',878],[' the',262]];
+  var heroNext=[[' flight',.41],[' takeoff',.22],[' landing',.13],[' trip',.08],[' storm',.03]];
+  var ht=document.getElementById('heroToggle');
+  function hero(){
+    var on=ht.checked;
+    document.getElementById('heroLabel').textContent=on?'Showing what the model sees':'Show what the model sees';
+    document.getElementById('heroInH').textContent=on?'Input that the model sees':'Input that you see';
+    document.getElementById('heroOutH').textContent=on?'Model output: next-token probabilities':'Your guess';
+    document.getElementById('heroIn').innerHTML=on
+      ?'<div class="toks">'+heroToks.map(function(t){return chip(t[0],t[1]);}).join('')+'</div><p class="hint">7 tokens. Only the numbers go into the model.</p>'
+      :'<p class="plainq">The pilot checked the engine before the <span class="blank">&nbsp;</span></p>';
+    var out=document.getElementById('heroOut');
+    if(on){out.innerHTML='<ol class="probs"></ol><span class="verdict good">The model predicts one token at a time</span>';bars(out.querySelector('ol'),heroNext);}
+    else out.innerHTML='<p class="answer">You read words and guess “flight”. Switch on the toggle to see how the model does it.</p>';
+  }
+  ht.addEventListener('change',hero);hero();
+
+  /* Tokenizer */
+  var suf=['ation','ition','ing','ment','ness','able','tion','ed','er','ly','s'];
+  function idOf(s){var h=5381;for(var i=0;i<s.length;i++)h=((h<<5)+h+s.charCodeAt(i))>>>0;return h%50257;}
+  function splitWord(w){
+    var sp=w[0]===' '?' ':'',core=sp?w.slice(1):w;
+    if(core.length<=7||!/^[A-Za-z]+$/.test(core))return [w];
+    var parts=[],tail='';
+    for(var i=0;i<suf.length;i++){var s=suf[i];if(core.toLowerCase().endsWith(s)&&core.length-s.length>=3){tail=core.slice(core.length-s.length);core=core.slice(0,core.length-s.length);break;}}
+    while(core.length>6){parts.push(core.slice(0,4));core=core.slice(4);}
+    parts.push(core); if(tail)parts.push(tail);
+    parts[0]=sp+parts[0]; return parts;
+  }
+  function tokenize(t){
+    var re=/'(?:s|t|re|ve|ll|d|m)|\s?[A-Za-z]+|\s?\d{1,3}|\s?[^\sA-Za-z\d]+|\s+/g,m,out=[];
+    while((m=re.exec(t))){splitWord(m[0]).forEach(function(p){out.push(p);});}
+    return out;
+  }
+  var tin=document.getElementById('tin');
+  function tok(){
+    var t=tin.value, toks=tokenize(t);
+    document.getElementById('tout').innerHTML=toks.map(function(x){return chip(x.replace(/\n/g,'↵'),idOf(x));}).join('');
+    var words=(t.match(/\S+/g)||[]).length;
+    document.getElementById('tstats').innerHTML='<span>Characters: <b>'+t.length+'</b></span><span>Words: <b>'+words+'</b></span><span>Tokens: <b>'+toks.length+'</b></span><span>Characters per token: <b>'+(toks.length?(t.length/toks.length).toFixed(1):0)+'</b></span>';
+  }
+  tin.addEventListener('input',tok);tok();
+
+  /* Attention */
+  var aT=['The',' pilot',' landed',' the',' plane',' because',' it',' was',' low',' on',' fuel','.'];
+  var W={2:{1:.55,0:.15,2:.3},4:{2:.32,3:.3,4:.2,1:.12,0:.06},6:{4:.52,1:.18,6:.08,2:.08,5:.07,3:.04,0:.03},
+    8:{6:.34,7:.26,4:.14,8:.12,5:.08,1:.06},10:{8:.28,4:.22,9:.18,6:.12,10:.1,7:.05,2:.05}};
+  var notes={2:'“landed” looks at “pilot”: who did the action?',4:'“plane” looks at “landed” and “the”.',
+    6:'“it” looks mostly at “plane”. The model finds what “it” means.',8:'“low” looks at “it” and “was”: what is low?',10:'“fuel” looks at “low” and “plane”.'};
+  function weights(i){
+    if(W[i])return W[i];
+    var w={};w[i]=.4; if(i>0)w[i-1]=.3; if(i>1)w[i-2]=.15;
+    var rest=0;for(var j=0;j<i-2;j++)rest++;
+    for(j=0;j<i-2;j++)w[j]=.15/rest;
+    var s=0;for(var k in w)s+=w[k];for(k in w)w[k]/=s;return w;
+  }
+  var attEl=document.getElementById('att'),attSel=6;
+  aT.forEach(function(t,i){var b=document.createElement('button');b.type='button';b.textContent=t.trim();b.addEventListener('click',function(){attSel=i;att();});attEl.appendChild(b);});
+  function att(){
+    var w=weights(attSel),btns=attEl.querySelectorAll('button');
+    btns.forEach(function(b,i){
+      var v=w[i]||0;
+      b.classList.toggle('sel',i===attSel); b.classList.toggle('future',i>attSel);
+      b.setAttribute('aria-pressed',i===attSel?'true':'false');
+      b.style.background=i>attSel?'':'color-mix(in srgb, var(--signal) '+Math.round(v*100*1.6)+'%, var(--sheet))';
+    });
+    var rows=Object.keys(w).map(function(k){return ['“'+aT[k].trim()+'”',w[k]];}).sort(function(a,b){return b[1]-a[1];}).slice(0,5);
+    bars(document.getElementById('attBars'),rows);
+    document.getElementById('attNote').textContent=(notes[attSel]||'This token looks mostly at itself and the tokens just before it.')+' Dashed tokens come later. A token cannot look at later tokens.';
+  }
+  att();
+
+  /* Temperature */
+  var cands=[[' flight',2.2],[' takeoff',1.9],[' landing',1.3],[' next',.9],[' storm',.2],[' coffee',-.6]];
+  var tr=document.getElementById('temp'),hist=[];
+  function probs(){var T=+tr.value,e=cands.map(function(c){return Math.exp(c[1]/T);}),s=e.reduce(function(a,b){return a+b;},0);return cands.map(function(c,i){return [c[0].trim(),e[i]/s];});}
+  function temp(){document.getElementById('tempVal').textContent=(+tr.value).toFixed(1);bars(document.getElementById('tprobs'),probs());gen();}
+  function gen(){document.getElementById('genOut').innerHTML='The pilot checked the engine before the <span class="new">'+(hist.length?esc(hist[hist.length-1]):'…')+'</span>'+(hist.length>1?'<div class="hint" style="margin-top:6px">Earlier selections: '+esc(hist.slice(0,-1).slice(-8).join(', '))+'</div>':'');}
+  document.getElementById('genBtn').addEventListener('click',function(){var p=probs(),r=Math.random(),a=0;for(var i=0;i<p.length;i++){a+=p[i][1];if(r<=a)break;}hist.push(p[Math.min(i,p.length-1)][0]);gen();});
+  document.getElementById('genReset').addEventListener('click',function(){hist=[];gen();});
+  tr.addEventListener('input',temp);temp();
+
+  /* Generic stepper */
+  function stepper(rootId,steps){
+    var root=document.getElementById(rootId);
+    root.innerHTML='<div class="proc"><ol class="steps"></ol><div class="stage" aria-live="polite"><h3></h3><div class="act"></div><div class="artifact"></div><div class="stage-nav"><button class="btn" type="button">Previous step</button><button class="btn primary" type="button">Next step</button></div></div></div>';
+    var ol=root.querySelector('.steps'),h=root.querySelector('.stage h3'),act=root.querySelector('.act'),art=root.querySelector('.artifact'),nav=root.querySelectorAll('.stage-nav .btn'),cur=0,seen=0;
+    steps.forEach(function(s,i){
+      if(s.ph){var p=document.createElement('li');p.className='phase';p.textContent=s.ph;ol.appendChild(p);}
+      var li=document.createElement('li'),b=document.createElement('button');b.type='button';
+      b.innerHTML='<span class="n">'+(i+1)+'</span><span>'+s.t+'</span>';b.addEventListener('click',function(){go(i);});li.appendChild(b);ol.appendChild(li);s.btn=b;
+    });
+    function go(i){cur=i;seen=Math.max(seen,i);
+      steps.forEach(function(s,j){s.btn.classList.toggle('on',j===i);s.btn.classList.toggle('done',j<=seen&&j!==i);s.btn.setAttribute('aria-current',j===i?'step':'false');});
+      h.textContent='Step '+(i+1)+'. '+steps[i].t; act.textContent=steps[i].a; art.innerHTML=steps[i].art;
+      nav[0].disabled=i===0; nav[1].textContent=i===steps.length-1?'Start again':'Next step';}
+    nav[0].addEventListener('click',function(){if(cur>0)go(cur-1);});
+    nav[1].addEventListener('click',function(){go(cur===steps.length-1?0:cur+1);});
+    go(0);
+  }
+  stepper('procLLM',[
+    {ph:'For each new token',t:'Tokenize',a:'Split the text into tokens. Change each token into its token ID.',
+     art:'"The pilot checked the engine before the"\n\n  → <span class="hl">[464] [18213] [10667] [262] [3113] [878] [262]</span>'},
+    {t:'Embed',a:'Change each token ID into its embedding vector. Add the position data.',
+     art:'[18213] " pilot"  → <span class="blue">[0.41, -0.22, 0.87, 0.05, …]</span>\n                    + position 2\n\n<span class="dim">One vector for each token. 7 tokens → 7 vectors.</span>'},
+    {t:'Apply attention',a:'In each layer, each token gets information from the earlier tokens. The vectors change to include the context.',
+     art:'Layer 1  … Layer 32 <span class="dim">(example)</span>\n\n" the" (last) looks at:\n  <span class="hl">" before"  0.31</span>\n  <span class="hl">" engine"  0.24</span>\n  " pilot"   0.12\n  …\n\n<span class="dim">After the layers, the last vector holds the meaning of the full sentence.</span>'},
+    {t:'Predict',a:'Change the last vector into one probability for each token in the vocabulary.',
+     art:'Vocabulary: approx. 100,000 tokens\n\n " flight"   <span class="hl">0.41</span>\n " takeoff"  0.22\n " landing"  0.13\n " trip"     0.08\n <span class="dim">… all other tokens share the rest</span>'},
+    {t:'Select',a:'Select one token. Temperature controls how strictly the model selects the most probable token.',
+     art:'temperature = 0.7\n\nselected → <span class="hl">" flight"</span>'},
+    {t:'Repeat',a:'Add the selected token to the text. Start again at step 1. Stop at an end token or at the length limit.',
+     art:'"The pilot checked the engine before the <span class="hl">flight</span>"\n\n  → next prediction: <span class="hl">"."</span>\n  → next prediction: <span class="dim">&lt;end&gt;</span>'}
+  ]);
+  stepper('procMCP',[
+    {ph:'A. At start (one time)',t:'Connect',a:'The host starts its MCP clients. Each client connects to one MCP server and gets its list of tools.',
+     art:'<span class="dim">client → server</span>  {"method": "tools/list"}\n\n<span class="dim">server → client</span>\n{"tools": [{\n   "name": "<span class="hl">get_work_order</span>",\n   "description": "Get the status of a maintenance work order",\n   "inputSchema": {"id": "string"}\n}]}'},
+    {t:'Give the tools to the model',a:'The host adds the tool names and descriptions to the context of the model.',
+     art:'<span class="dim">Context (part):</span>\nAvailable tools:\n- get_work_order(id): Get the status of a maintenance work order'},
+    {ph:'B. For each question',t:'Ask',a:'The user asks a question in the host app.',
+     art:'User: "What is the status of work order WO-2231?"'},
+    {t:'Request a tool call',a:'The model predicts that a tool can help. It writes a tool request, not an answer.',
+     art:'<span class="dim">model output:</span>\n{"tool": "<span class="hl">get_work_order</span>", "arguments": {"id": "WO-2231"}}'},
+    {t:'Approve and run',a:'The host shows the request to the user for approval. Then the client sends it to the server. The server reads the work order database.',
+     art:'<span class="dim">client → server</span>  {"method": "tools/call", "params": {"name": "get_work_order", "arguments": {"id": "WO-2231"}}}\n\n<span class="dim">server → client</span>\n{"status": "In progress", "task": "Replace left brake unit",\n "done": "Brake unit installed", "next": "Final check due 5 Oct"}'},
+    {t:'Answer',a:'The host gives the result to the model. The model writes the answer from the result.',
+     art:'Work order WO-2231 is in progress. The technician installed\nthe new left brake unit. The final check is due on 5 October.\n\n<span class="blue">Source: maintenance system (get_work_order)</span>'}
+  ]);
+
+  /* MCP toggle */
+  var mt=document.getElementById('mcpToggle');
+  function mcp(){
+    var on=mt.checked;
+    document.getElementById('mcpLabel').textContent=on?'MCP is on':'MCP is off';
+    document.getElementById('mcpCtx').innerHTML=on
+      ?'<span class="chip"><b>1</b> Model requests get_work_order("WO-2231")</span><span class="chip"><b>2</b> User approves. MCP server reads the database.</span><span class="chip"><b>3</b> Result: In progress. Final check due 5 Oct.</span>'
+      :'Only the question. The model has no connection to the maintenance system.';
+    document.getElementById('mcpAns').innerHTML=on
+      ?'Work order WO-2231 is in progress. The new left brake unit is installed. The final check is due on 5 October.<div class="src">Source: maintenance system, through MCP</div><span class="verdict good">Live data</span>'
+      :'I do not have access to your maintenance system. Please look up WO-2231 there.<br><span class="verdict bad">No access to live data</span>';
+  }
+  mt.addEventListener('change',mcp);mcp();
+
+  /* Quiz */
+  var quiz=[
+    {q:'What does an LLM make in each step of the loop?',o:['A full answer','One next token','A database query'],a:1,f:'Correct. It predicts one token, adds it, and repeats.'},
+    {q:'What is a token?',o:['Always one full word','A small piece of text, often a part of a word','A password for the API'],a:1,f:'Correct. Tokens can be words, parts of words or punctuation.'},
+    {q:'What does attention do?',o:['It lets each token get information from other tokens','It stores your documents','It connects the model to APIs'],a:0,f:'Correct. Attention mixes in context from the earlier tokens.'},
+    {q:'You set a low temperature. What do you get?',o:['More varied answers','More predictable answers'],a:1,f:'Correct. Low temperature almost always selects the most probable token.'},
+    {q:'With MCP, which part runs the tool?',o:['The LLM','The host, through the MCP client and server'],a:1,f:'Correct. The model only requests the tool call.'}
+  ];
+  var qz=document.getElementById('quiz');
+  quiz.forEach(function(item,qi){
+    var d=document.createElement('div');d.className='q';
+    d.innerHTML='<p>'+(qi+1)+'. '+item.q+'</p><div class="opts" role="group"></div><div class="fb" aria-live="polite"></div>';
+    var opts=d.querySelector('.opts'),fb=d.querySelector('.fb');
+    item.o.forEach(function(o,oi){var b=document.createElement('button');b.type='button';b.className='btn';b.textContent=o;
+      b.addEventListener('click',function(){opts.querySelectorAll('.btn').forEach(function(x){x.classList.remove('right','wrong');});
+        if(oi===item.a){b.classList.add('right');fb.textContent=item.f;}else{b.classList.add('wrong');fb.textContent='Not correct. Try again.';}});
+      opts.appendChild(b);});
+    qz.appendChild(d);
+  });
+
+  /* TOC */
+  var links=[].slice.call(document.querySelectorAll('.toc a'));
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting)links.forEach(function(l){l.classList.toggle('on',l.getAttribute('href')==='#'+e.target.id);});});},{rootMargin:'-40% 0px -55% 0px'});
+    document.querySelectorAll('main > header, main > section').forEach(function(s){io.observe(s);});
+  }
+})();
+</script>
+</body></html>
